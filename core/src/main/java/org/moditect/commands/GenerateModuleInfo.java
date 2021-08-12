@@ -382,14 +382,9 @@ public class GenerateModuleInfo {
 
     private ModuleDeclaration parseGeneratedModuleInfo() {
         Path moduleDir = workingDirectory.resolve( autoModuleNameForInputJar );
-        if (JavaVersionHelper.resolveWithVersionIfMultiRelease(log)) {
-            int multiReleaseIdx = jdepsExtraArgs.indexOf("--multi-release");
-            if (multiReleaseIdx >= 0) {
-                log.debug("Resolve with version: multi release is set");
-                moduleDir = moduleDir.resolve("versions").resolve(jdepsExtraArgs.get(multiReleaseIdx + 1));
-            } else {
-                log.debug("Resolve without version: multi release not set");
-            }
+        Optional<Integer> versionToResolve = JavaVersionHelper.resolveWithVersion(jdepsExtraArgs, log);
+        if (versionToResolve.isPresent()) {
+            moduleDir = moduleDir.resolve("versions").resolve(versionToResolve.get().toString());
         }
         Path moduleInfo = moduleDir.resolve( "module-info.java" );
 

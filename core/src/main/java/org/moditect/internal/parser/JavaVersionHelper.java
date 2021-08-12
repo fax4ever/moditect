@@ -17,6 +17,8 @@ package org.moditect.internal.parser;
 
 import org.moditect.spi.log.Log;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -28,28 +30,26 @@ import java.util.regex.Pattern;
  */
 public final class JavaVersionHelper {
 
-    public static boolean resolveWithVersionIfMultiRelease(Log log) {
-        Version version = new JavaVersionHelper(log).javaVersion();
-        if (version == null) {
-            return false;
+    public static Optional<Integer> resolveWithVersion(List<String> jdepsExtraArgs, Log log) {
+        JavaVersionHelper versionHelper = new JavaVersionHelper(log);
+        if (!versionHelper.resolveWithVersionIfMultiRelease()) {
+            log.debug("Java version does not need to check if " + MULTI_RELEASE_ARGUMENT + " is set");
+            return Optional.empty();
         }
 
-        if (version.major >= 14) {
-            log.debug("Detected JDK 14+");
-            return true;
+        Optional<Integer> result = versionHelper.extractVersion(jdepsExtraArgs);
+        if ( result.isPresent() ) {
+            log.debug("Resolve with version: multi release is set to " + result.get());
+        } else {
+            log.debug("Resolve without version: multi release not set");
         }
-
-        // See https://github.com/moditect/moditect/issues/141
-        if (version.major == 11 && version.minor == 0 && version.mini >= 11) {
-            log.debug("Detected JDK 11.0.11+");
-            return true;
-        }
-        return false;
+        return result;
     }
 
     private static final String VERSION_REGEXP = "^(\\d+)\\.(\\d+)\\.(\\d+).*";
     private static final Pattern VERSION_PATTERN = Pattern.compile(VERSION_REGEXP);
     private static final String JAVA_VERSION_PROPERTY_NAME = "java.version";
+    private static final String MULTI_RELEASE_ARGUMENT = "--multi-release";
 
     private final Log log;
 
@@ -63,9 +63,7 @@ public final class JavaVersionHelper {
 
     Version javaVersion() {
         String versionString = System.getProperty(JAVA_VERSION_PROPERTY_NAME);
-        if (log != null) {
-            log.debug(JAVA_VERSION_PROPERTY_NAME + " -> " + versionString);
-        }
+        debug(JAVA_VERSION_PROPERTY_NAME + " -> " + versionString);
 
         return javaVersion(versionString);
     }
@@ -73,10 +71,7 @@ public final class JavaVersionHelper {
     Version javaVersion(String versionString) {
         Matcher matcher = VERSION_PATTERN.matcher(versionString);
         if (!matcher.matches()) {
-            if (log != null) {
-                log.warn("The java version " + versionString + " cannot be parsed as " + VERSION_REGEXP);
-            }
-
+            warn("The java version " + versionString + " cannot be parsed as " + VERSION_REGEXP);
             return null;
         }
 
@@ -85,17 +80,97 @@ public final class JavaVersionHelper {
                     Integer.parseInt(matcher.group(2)),
                     Integer.parseInt(matcher.group(3)));
 
-            if (log != null) {
-                log.debug("parsed.version -> " + version);
-            }
-
+            debug("parsed.version -> " + version);
             return version;
         } catch (IndexOutOfBoundsException | NumberFormatException ex) {
-            if (log != null) {
-                log.error("The java version " + versionString + " has an invalid format. " + ex.getMessage());
-            }
-
+            error("The java version " + versionString + " has an invalid format. " + ex.getMessage());
             return null;
+        }
+    }
+
+    private boolean resolveWithVersionIfMultiRelease() {
+        Version version = javaVersion();
+        if (version == null) {
+            return false;
+        }
+
+        if (version.major >= 14) {
+            debug("Detected JDK 14+");
+            return true;
+        }
+
+        // See https://github.com/moditect/moditect/issues/141
+        if (version.major == 11 && version.minor == 0 && version.mini >= 11) {
+            debug("Detected JDK 11.0.11+");
+            return true;
+        }
+        return false;
+    }
+
+    private Optional<Integer> extractVersion(List<String> jdepsExtraArgs) {
+        for (int i = 0; i < jdepsExtraArgs.size(); i++) {
+            String extraArg = jdepsExtraArgs.get(i);
+
+            if (extraArg.startsWith(MULTI_RELEASE_ARGUMENT)) {
+                if (extraArg.length() == MULTI_RELEASE_ARGUMENT.length()) {
+                    // we expect the version number in the next argument
+                    return extractVersionFromNextArgument(jdepsExtraArgs, i);
+                }
+                return extractVersionFromSameArgument(extraArg);
+            }
+        }
+
+        debug("No version can be extracted from arguments: " + jdepsExtraArgs);
+        return Optional.empty();
+    }
+
+    private Optional<Integer> extractVersionFromNextArgument(List<String> jdepsExtraArgs, int i) {
+        if (i == jdepsExtraArgs.size() - 1) {
+            // there is no next argument
+            error("No argument value for " + MULTI_RELEASE_ARGUMENT);
+            return Optional.empty();
+        }
+
+        String versionString = jdepsExtraArgs.get(i + 1);
+        debug("Version extracted from the next argument: " + versionString);
+        return parseVersionNumber(versionString);
+    }
+
+    private Optional<Integer> extractVersionFromSameArgument(String multiReleaseArgument) {
+        if (multiReleaseArgument.length() < MULTI_RELEASE_ARGUMENT.length() + 2) {
+            error("Invalid argument value for " + MULTI_RELEASE_ARGUMENT + ": " + multiReleaseArgument);
+            return Optional.empty();
+        }
+
+        String versionString = multiReleaseArgument.substring(MULTI_RELEASE_ARGUMENT.length()+1);
+        debug("Version extracted from the same argument: " + versionString);
+        return parseVersionNumber(versionString);
+    }
+
+    private Optional<Integer> parseVersionNumber(String versionString) {
+        try {
+            return Optional.of(Integer.parseInt(versionString));
+        } catch (NumberFormatException ex) {
+            error("Invalid argument value for " + MULTI_RELEASE_ARGUMENT + ": " + versionString);
+            return Optional.empty();
+        }
+    }
+
+    private void debug(String message) {
+        if (log != null) {
+            log.debug(message);
+        }
+    }
+
+    private void warn(String message) {
+        if (log != null) {
+            log.warn(message);
+        }
+    }
+
+    private void error(String message) {
+        if (log != null) {
+            log.error(message);
         }
     }
 
